@@ -1,6 +1,6 @@
 creds.yaml
 node_modules
-
+__pycache__
 build/
 zk/**/keys/
 keys/
