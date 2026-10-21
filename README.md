@@ -134,10 +134,12 @@ flowchart LR
         CC --> ART["per-circuit .tgz:\n.wasm + final.zkey + verification_key.json"]
     end
 
-    subgraph J2["Job: build-and-prove  ← runs in the TEE environment"]
-        TB["Task 1: build-tee\n(tee_build.js)"]
+    subgraph J2["Job: build-and-prove"]
+        subgraph ENCLAVE["🔒 AWS Nitro Enclave  (TEE)"]
+            TB["Task 1: build-tee\n(tee_build.js)"]
+        end
         ZP["Task 2: zk-proof\n(zk-proof.js)"]
-        TB -- "private witnesses + TEE report" --> ZP
+        ENCLAVE -- "private witnesses + TEE report" --> ZP
     end
 
     ART -- "compiled circuits (via S3)" --> ZP
@@ -157,9 +159,10 @@ S3/MinIO. This is amortized — it only re-runs when a circuit definition change
 
 ### Job 2 — `build-and-prove` *(the TEE job)*
 
-Two sequential tasks. **Both run inside the TEE environment (AWS Nitro Enclave);**
-`build-tee` performs the measured build and `zk-proof` consumes its private
-witnesses.
+Two sequential tasks. **Only `build-tee` runs inside the TEE (AWS Nitro Enclave).**
+`zk-proof` runs outside the enclave, in the normal Concourse worker — this is
+sound because the enclave binds the witnesses to `report_data` before exiting,
+so the ZK proofs over those witnesses carry the same hardware guarantee.
 
 1. **`build-tee`** — [ci/scripts/tee_build.js](ci/scripts/tee_build.js), run in
    the **TEE build image** ([ci/Dockerfile.tee](ci/Dockerfile.tee): Node 22 +
