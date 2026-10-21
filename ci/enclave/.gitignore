@@ -1,0 +1,7 @@
+# Rust build output
+nsm-attest/target/
+
+# Enclave image + outputs
+*.eif
+eif-measurements.json
+enclave-out/

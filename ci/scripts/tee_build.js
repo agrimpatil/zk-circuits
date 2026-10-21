@@ -813,13 +813,36 @@ async function main() {
     artifactHashResult.built_artifact_commitment,
   );
 
-  const teeReport = {
-    measurement:       "sha256:bca64153c63d6547f333fe5147e1843f1eccf155ae069a3487aade436b5ae03a",
-    report_data:       "sha256:" + reportData,
-    nonce:             "dummy-nonce",
-    signature:         "dummy-signature",
-    certificate_chain: ["dummy-certificate"],
-  };
+  // When NSM_ATTEST=1 (set only when running inside a real Nitro Enclave) we
+  // request a genuine attestation document from the Nitro Security Module via
+  // the nsm-attest helper, passing report_data (the 32-byte sha256 digest) as
+  // the NSM user_data. The signed COSE_Sign1 document — which carries the real
+  // PCR measurements, signature and CA certificate chain — is embedded as
+  // base64. Otherwise we fall back to the mocked envelope so local and
+  // Concourse runs keep working unchanged.
+  let teeReport;
+  if (process.env.NSM_ATTEST === "1") {
+    const nsmBin   = process.env.NSM_ATTEST_BIN || "/usr/local/bin/nsm-attest";
+    const cborPath = path.join(s3BuildDir, "attestation.cbor");
+    const nsm      = run(nsmBin, ["--user-data", reportData, "--out", cborPath]);
+    if (nsm.exitCode !== 0 || !fs.existsSync(cborPath)) {
+      throw new Error(`nsm-attest failed (exit ${nsm.exitCode}): ${nsm.output}`);
+    }
+    const attestationB64 = fs.readFileSync(cborPath).toString("base64");
+    teeReport = {
+      report_data:              "sha256:" + reportData,
+      attestation_document_b64: attestationB64,
+    };
+    console.log(`[TEE_BUILD] NSM attestation: ${cborPath} (${attestationB64.length} b64 chars)`);
+  } else {
+    teeReport = {
+      measurement:       "sha256:bca64153c63d6547f333fe5147e1843f1eccf155ae069a3487aade436b5ae03a",
+      report_data:       "sha256:" + reportData,
+      nonce:             "dummy-nonce",
+      signature:         "dummy-signature",
+      certificate_chain: ["dummy-certificate"],
+    };
+  }
 
   fs.writeFileSync(
     path.join(s3BuildDir, "tee_report.json"),

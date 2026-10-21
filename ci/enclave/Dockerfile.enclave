@@ -1,0 +1,77 @@
+# syntax=docker/dockerfile:1
+#
+# Enclave image for build-tee. Build context MUST be the repo root that contains
+# both zk-circuits/ and zk-src-repo/ (i.e. .../zk-POCs/zk-CICDv3), e.g.:
+#   docker build --platform linux/amd64 -f zk-circuits/ci/enclave/Dockerfile.enclave -t tee-build-enclave .
+# Then convert to an .eif with: nitro-cli build-enclave --docker-uri tee-build-enclave ...
+
+# ---- Stage 1: build the NSM attestation helper ----
+FROM rust:slim-bookworm AS nsm-builder
+WORKDIR /build
+COPY zk-circuits/ci/enclave/nsm-attest/Cargo.toml ./Cargo.toml
+COPY zk-circuits/ci/enclave/nsm-attest/src ./src
+RUN cargo build --release && cp target/release/nsm-attest /nsm-attest
+
+# ---- Stage 2: enclave runtime (mirrors ci/Dockerfile.tee) ----
+FROM node:22-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      cmake \
+      curl \
+      ca-certificates \
+      git \
+      zip \
+      unzip \
+      tar \
+      pkg-config \
+      libssl-dev \
+      ninja-build \
+      python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# vcpkg at the app's baseline commit
+ARG VCPKG_COMMIT=5d35de2ee8b13d0bcec328153605638a74fbbf84
+RUN git clone https://github.com/microsoft/vcpkg /opt/vcpkg \
+    && git -C /opt/vcpkg checkout ${VCPKG_COMMIT} \
+    && /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics \
+    && ln -s /opt/vcpkg/vcpkg /usr/local/bin/vcpkg
+ENV VCPKG_ROOT=/opt/vcpkg
+
+# Pre-install deps so the enclave build needs no network (enclaves have none).
+RUN mkdir -p /tmp/vcpkg-prefetch && \
+    printf '{\n\
+  "name": "tee-build-deps",\n\
+  "version": "0.1.0",\n\
+  "dependencies": [\n\
+    { "name": "fmt",           "version>=": "10.2.1" },\n\
+    { "name": "nlohmann-json", "version>=": "3.11.3" },\n\
+    { "name": "openssl",       "version>=": "3.2.1"  },\n\
+    { "name": "catch2",        "version>=": "3.5.2"  }\n\
+  ],\n\
+  "builtin-baseline": "5d35de2ee8b13d0bcec328153605638a74fbbf84"\n\
+}\n' > /tmp/vcpkg-prefetch/vcpkg.json && \
+    vcpkg install \
+      --x-manifest-root=/tmp/vcpkg-prefetch \
+      --x-install-root=/opt/vcpkg-installed \
+    && rm -rf /tmp/vcpkg-prefetch
+ENV VCPKG_INSTALLED_DIR=/opt/vcpkg-installed
+
+WORKDIR /work
+
+# NSM attestation helper
+COPY --from=nsm-builder /nsm-attest /usr/local/bin/nsm-attest
+
+# CI scripts (tee_build.js + node deps) — installed at build time (offline enclave)
+COPY zk-circuits/ci/scripts /work/cicd-repo/ci/scripts
+RUN npm install --prefix /work/cicd-repo/ci/scripts --no-audit --no-fund
+
+# Application source baked in (enclave has no network / fs passthrough)
+COPY zk-src-repo /work/src-repo
+
+# Entrypoint + vsock sender
+COPY zk-circuits/ci/enclave/enclave-run.sh /work/enclave-run.sh
+COPY zk-circuits/ci/enclave/vsock-send.py  /work/vsock-send.py
+RUN chmod +x /work/enclave-run.sh
+
+CMD ["/work/enclave-run.sh"]
