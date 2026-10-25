@@ -5,60 +5,45 @@ include "../../node_modules/circomlib/circuits/poseidon.circom";
 /*
   F_scan
 
+  The TEE runs Trivy against the produced OCI image and computes
+  SHA-256(full_scan_log), splitting the 32-byte digest into two 128-bit
+  BN254 field elements:
+    sha256_hi = bytes  0-15 interpreted as a big-endian 128-bit integer
+    sha256_lo = bytes 16-31 interpreted as a big-endian 128-bit integer
+
+  128 bits is well within the BN254 scalar field prime (~2^254), so no modular
+  reduction occurs and the encoding is a bijection — all SHA-256 security
+  properties (collision resistance, preimage resistance) are preserved.
+
+  SHA-256 is computed inside the attested enclave; the circuit binds the digest
+  to the public commitment and enforces scan_exit_code == 0 in-circuit.
+  Trivy exit 0 means no CRITICAL CVEs were found in the produced OCI image.
+
+  Replaces the C++ pipeline's f_test: for containers, "passed a vulnerability
+  scan" is the policy a sovereign operator actually needs.
+
   Private:
-    scan_log_chunks[MAX_LOG_CHUNKS]
-    scan_exit_code
+    sha256_hi        bytes  0-15 of SHA-256(full Trivy scan log)
+    sha256_lo        bytes 16-31 of SHA-256(full Trivy scan log)
+    scan_exit_code   Trivy exit code (constrained to 0 = no CRITICAL CVEs)
 
   Public:
-    scan_log_hash
-
-  Hash style:
-    h0 = Poseidon(chunk_1, chunk_2)
-    h1 = Poseidon(h0, chunk_3)
-    ...
-    final_hash = Poseidon(h_last, scan_exit_code)
-
-  Claim:
-    Poseidon-chained private Trivy scan log == public scan_log_hash
-    scan_exit_code == 0   (Trivy exit 0 = no CRITICAL CVEs in the produced image)
-
-  Replaces the C++ pipeline's f_test. Operationally meaningful for containers:
-  proves the produced OCI image passed a vulnerability scan with no critical findings,
-  while keeping the scan log confidential.
+    scan_log_hash = Poseidon(sha256_hi, sha256_lo, scan_exit_code)
 */
 
-template FScan(MAX_LOG_CHUNKS) {
-    signal input scan_log_chunks[MAX_LOG_CHUNKS];
-
+template FScan() {
+    signal input sha256_hi;
+    signal input sha256_lo;
     signal input scan_exit_code;
-
     signal input scan_log_hash;
 
-    // Need at least 2 chunks: h0 = Poseidon(chunk_1, chunk_2)
-    component chunk_hashes[MAX_LOG_CHUNKS - 1];
+    component hasher = Poseidon(3);
+    hasher.inputs[0] <== sha256_hi;
+    hasher.inputs[1] <== sha256_lo;
+    hasher.inputs[2] <== scan_exit_code;
 
-    // h0 = Poseidon(chunk_1, chunk_2)
-    chunk_hashes[0] = Poseidon(2);
-    chunk_hashes[0].inputs[0] <== scan_log_chunks[0];
-    chunk_hashes[0].inputs[1] <== scan_log_chunks[1];
-
-    // h_i = Poseidon(h_{i-1}, chunk_{i+2})
-    for (var i = 1; i < MAX_LOG_CHUNKS - 1; i++) {
-        chunk_hashes[i] = Poseidon(2);
-        chunk_hashes[i].inputs[0] <== chunk_hashes[i - 1].out;
-        chunk_hashes[i].inputs[1] <== scan_log_chunks[i + 1];
-    }
-
-    // final_hash = Poseidon(h_last, scan_exit_code)
-    component final_hasher = Poseidon(2);
-    final_hasher.inputs[0] <== chunk_hashes[MAX_LOG_CHUNKS - 2].out;
-    final_hasher.inputs[1] <== scan_exit_code;
-
-    // Public hash check
-    scan_log_hash === final_hasher.out;
-
-    // Exit-code constraint (0 = no critical CVEs)
+    hasher.out === scan_log_hash;
     scan_exit_code === 0;
 }
 
-component main { public [scan_log_hash] } = FScan(16);
+component main { public [scan_log_hash] } = FScan();

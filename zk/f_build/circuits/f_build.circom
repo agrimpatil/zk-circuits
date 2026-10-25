@@ -5,67 +5,40 @@ include "../../node_modules/circomlib/circuits/poseidon.circom";
 /*
   F_build
 
+  The TEE computes SHA-256(full_build_log) and splits the 32-byte digest into
+  two 128-bit BN254 field elements:
+    sha256_hi = bytes  0-15 interpreted as a big-endian 128-bit integer
+    sha256_lo = bytes 16-31 interpreted as a big-endian 128-bit integer
+
+  128 bits is well within the BN254 scalar field prime (~2^254), so no modular
+  reduction occurs and the encoding is a bijection — all SHA-256 security
+  properties (collision resistance, preimage resistance) are preserved.
+
+  SHA-256 is computed inside the attested enclave; the circuit binds the digest
+  to the public commitment and enforces exit_code == 0 in-circuit.
+
   Private:
-    build_log_chunks[MAX_LOG_CHUNKS]
-    build_exit_code
+    sha256_hi         bytes  0-15 of SHA-256(full build log)
+    sha256_lo         bytes 16-31 of SHA-256(full build log)
+    build_exit_code   Kaniko exit code (constrained to 0)
 
   Public:
-    build_log_hash
-
-  Hash style:
-    h0 = Poseidon(chunk_1, chunk_2)
-    h1 = Poseidon(h0, chunk_3)
-    h2 = Poseidon(h1, chunk_4)
-    ...
-    final_hash = Poseidon(h_last, build_exit_code)
-
-  Claim:
-    Poseidon-chained private build log == public build_log_hash
-    build_exit_code == 0
-
-  For OCI builds the build is a single Kaniko invocation, so a single exit
-  code is bound into the final hash (was three stage exit codes for the C++ build).
+    build_log_hash = Poseidon(sha256_hi, sha256_lo, build_exit_code)
 */
 
-template FBuild(MAX_LOG_CHUNKS) {
-    signal input build_log_chunks[MAX_LOG_CHUNKS];
-
+template FBuild() {
+    signal input sha256_hi;
+    signal input sha256_lo;
     signal input build_exit_code;
-
     signal input build_log_hash;
 
-    /*
-      Need at least 2 chunks because:
-        h0 = Poseidon(chunk_1, chunk_2)
-    */
+    component hasher = Poseidon(3);
+    hasher.inputs[0] <== sha256_hi;
+    hasher.inputs[1] <== sha256_lo;
+    hasher.inputs[2] <== build_exit_code;
 
-    // Number of intermediate hashes:
-    // 1 initial hash for chunk_1 + chunk_2
-    // plus one hash for each remaining chunk
-    component chunk_hashes[MAX_LOG_CHUNKS - 1];
-
-    // h0 = Poseidon(chunk_1, chunk_2)
-    chunk_hashes[0] = Poseidon(2);
-    chunk_hashes[0].inputs[0] <== build_log_chunks[0];
-    chunk_hashes[0].inputs[1] <== build_log_chunks[1];
-
-    // h_i = Poseidon(h_{i-1}, chunk_{i+2})
-    for (var i = 1; i < MAX_LOG_CHUNKS - 1; i++) {
-        chunk_hashes[i] = Poseidon(2);
-        chunk_hashes[i].inputs[0] <== chunk_hashes[i - 1].out;
-        chunk_hashes[i].inputs[1] <== build_log_chunks[i + 1];
-    }
-
-    // final_hash = Poseidon(h_last, build_exit_code)
-    component final_hasher = Poseidon(2);
-    final_hasher.inputs[0] <== chunk_hashes[MAX_LOG_CHUNKS - 2].out;
-    final_hasher.inputs[1] <== build_exit_code;
-
-    // Public hash check
-    build_log_hash === final_hasher.out;
-
-    // Exit-code constraint
+    hasher.out === build_log_hash;
     build_exit_code === 0;
 }
 
-component main { public [build_log_hash] } = FBuild(16);
+component main { public [build_log_hash] } = FBuild();
