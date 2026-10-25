@@ -1,0 +1,20 @@
+{
+  "name": "f-base-image-merkle-membership",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dependencies are shared from zk/package.json (run `npm install` once in zk/).",
+  "scripts": {
+    "compile": "mkdir -p build keys proofs inputs && circom circuits/f_base_image.circom --r1cs --wasm --sym -o build",
+    "generate-input": "node scripts/generate_input.js",
+    "witness": "node build/f_base_image_js/generate_witness.js build/f_base_image_js/f_base_image.wasm inputs/input.json build/witness.wtns",
+    "powersoftau:start": "snarkjs powersoftau new bn128 12 keys/pot12_0000.ptau -v",
+    "powersoftau:contribute": "snarkjs powersoftau contribute keys/pot12_0000.ptau keys/pot12_0001.ptau --name='first contribution' -v",
+    "powersoftau:prepare": "snarkjs powersoftau prepare phase2 keys/pot12_0001.ptau keys/pot12_final.ptau -v",
+    "groth16:setup": "snarkjs groth16 setup build/f_base_image.r1cs keys/pot12_final.ptau keys/f_base_image_0000.zkey",
+    "groth16:contribute": "snarkjs zkey contribute keys/f_base_image_0000.zkey keys/f_base_image_final.zkey --name='f_base_image contribution' -v -e='more random entropy'",
+    "verification-key": "snarkjs zkey export verificationkey keys/f_base_image_final.zkey keys/verification_key.json",
+    "prove": "snarkjs groth16 prove keys/f_base_image_final.zkey build/witness.wtns proofs/proof.json proofs/public.json",
+    "verify": "snarkjs groth16 verify keys/verification_key.json proofs/public.json proofs/proof.json",
+    "full": "npm run compile && npm run generate-input && npm run witness && npm run powersoftau:start && npm run powersoftau:contribute && npm run powersoftau:prepare && npm run groth16:setup && npm run groth16:contribute && npm run verification-key && npm run prove && npm run verify"
+  }
+}

@@ -1,6 +1,6 @@
 pragma circom 2.1.6;
 
-include "../node_modules/circomlib/circuits/poseidon.circom";
+include "../../node_modules/circomlib/circuits/poseidon.circom";
 
 template FArtifact() {
     // Public inputs
@@ -10,18 +10,18 @@ template FArtifact() {
     // Private witnesses
     signal input declared_artifact_hash;
     signal input built_artifact_hash;
-    signal input r1;
-    signal input r2;
+    signal input r_art_decl;   // Party A's blinding factor for the declared artifact commitment
+    signal input r_art_used;   // Party B's blinding factor for the built artifact commitment
 
-    // Commit(declared_artifact_hash, r1)
+    // Commit(declared_artifact_hash, r_art_decl)
     component declaredHasher = Poseidon(2);
     declaredHasher.inputs[0] <== declared_artifact_hash;
-    declaredHasher.inputs[1] <== r1;
+    declaredHasher.inputs[1] <== r_art_decl;
 
-    // Commit(built_artifact_hash, r2)
+    // Commit(built_artifact_hash, r_art_used)
     component usedHasher = Poseidon(2);
     usedHasher.inputs[0] <== built_artifact_hash;
-    usedHasher.inputs[1] <== r2;
+    usedHasher.inputs[1] <== r_art_used;
 
     // Check commitment openings
     declaredHasher.out === declared_commitment;

@@ -1,15 +1,13 @@
 pragma circom 2.1.6;
 
-include "../node_modules/circomlib/circuits/poseidon.circom";
+include "../../node_modules/circomlib/circuits/poseidon.circom";
 
 /*
   F_build
 
   Private:
     build_log_chunks[MAX_LOG_CHUNKS]
-    stage_1_exit_code
-    stage_2_exit_code
-    stage_3_exit_code
+    build_exit_code
 
   Public:
     build_log_hash
@@ -19,21 +17,20 @@ include "../node_modules/circomlib/circuits/poseidon.circom";
     h1 = Poseidon(h0, chunk_3)
     h2 = Poseidon(h1, chunk_4)
     ...
-    final_hash = Poseidon(h_last, exit_1, exit_2, exit_3)
+    final_hash = Poseidon(h_last, build_exit_code)
 
   Claim:
     Poseidon-chained private build log == public build_log_hash
-    stage_1_exit_code == 0
-    stage_2_exit_code == 0
-    stage_3_exit_code == 0
+    build_exit_code == 0
+
+  For OCI builds the build is a single Kaniko invocation, so a single exit
+  code is bound into the final hash (was three stage exit codes for the C++ build).
 */
 
 template FBuild(MAX_LOG_CHUNKS) {
     signal input build_log_chunks[MAX_LOG_CHUNKS];
 
-    signal input stage_1_exit_code;
-    signal input stage_2_exit_code;
-    signal input stage_3_exit_code;
+    signal input build_exit_code;
 
     signal input build_log_hash;
 
@@ -59,20 +56,16 @@ template FBuild(MAX_LOG_CHUNKS) {
         chunk_hashes[i].inputs[1] <== build_log_chunks[i + 1];
     }
 
-    // final_hash = Poseidon(h_last, exit_1, exit_2, exit_3)
-    component final_hasher = Poseidon(4);
+    // final_hash = Poseidon(h_last, build_exit_code)
+    component final_hasher = Poseidon(2);
     final_hasher.inputs[0] <== chunk_hashes[MAX_LOG_CHUNKS - 2].out;
-    final_hasher.inputs[1] <== stage_1_exit_code;
-    final_hasher.inputs[2] <== stage_2_exit_code;
-    final_hasher.inputs[3] <== stage_3_exit_code;
+    final_hasher.inputs[1] <== build_exit_code;
 
     // Public hash check
     build_log_hash === final_hasher.out;
 
-    // Exit-code constraints
-    stage_1_exit_code === 0;
-    stage_2_exit_code === 0;
-    stage_3_exit_code === 0;
+    // Exit-code constraint
+    build_exit_code === 0;
 }
 
 component main { public [build_log_hash] } = FBuild(16);

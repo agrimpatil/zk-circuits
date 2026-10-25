@@ -1,0 +1,20 @@
+{
+  "name": "zk-oci-circuits",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Shared dependencies for the 6 OCI-image ZK build-verification circuits (f_source, f_base_image, f_packages, f_build, f_scan, f_artifact).",
+  "dependencies": {
+    "circomlib": "2.0.5",
+    "circomlibjs": "^0.1.7"
+  },
+  "devDependencies": {
+    "snarkjs": "^0.7.5"
+  },
+  "overrides": {
+    "underscore": "^1.13.8",
+    "bfj": "^9.1.3",
+    "ws": "^8.21.0",
+    "elliptic": "^6.6.1"
+  }
+}
