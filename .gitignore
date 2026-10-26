@@ -6,4 +6,8 @@ zk/**/keys/
 keys/
 proofs/
 
+# OCI pipeline local artifacts
+compiled/
+.oci-run/
+ZK-TEE-experiment-context.md
 .DS_Store
